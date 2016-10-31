@@ -1,0 +1,198 @@
+---
+title: "Practical Machine Learning - Prediction Assignment"
+author: "Shibashis Mukherjee"
+date: "October 30, 2016"
+output: html_document
+---
+
+
+##Introduction
+People collect and upload excercise related data using devices such as Jawbone Up, Nike FuelBand, and Fitbit. However mostly they upload data about how much of a particular activity they do, but not how well they do it. 6 participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal is to see if the quality of the excercise performed can be predicted using machine learning algorithm on data from accelerometers on the belt, forearm, arm, and dumbell of these participants.
+
+##Question
+Is it possible to accurately predict the appropriate activity quality (class A-E) using data gathered from accelerometers on the belt, forearm, arm, and dumbell of the participants?
+
+##Data
+The data for this project comes from the source: http://groupware.les.inf.puc-rio.br/har and is partitioned into two groups - a training set and a testing set.
+
+Training: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+Testing: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+###Setup Environment
+Load the requried libraries, Set the working directory.
+```{r, message=FALSE, warning=FALSE, results='hide'}
+library(AppliedPredictiveModeling)
+library(caret)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+```
+
+###Download the input data files
+```{r}
+setwd("C:/Rdata/PracticalMachineLearning")
+url_train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+file_train <- "pml-training.csv"
+download.file(url=url_train, destfile=file_train)
+url_test <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+file_test <- "pml-testing.csv"
+download.file(url=url_test, destfile=file_test)
+```
+
+###Load the Data and inspect it.
+```{r}
+df_train <- read.csv(file_train, na.strings=c("NA","#DIV/0!",""), header=TRUE)
+cols_train <- colnames(df_train)
+df_test <- read.csv(file_test, na.strings=c("NA","#DIV/0!",""), header=TRUE)
+cols_test <- colnames(df_test)
+dim(df_train)
+dim(df_test)
+```
+As we can see the training data contains 19622 rows and the test set has 20 rows. 
+```{r, results='hide'}
+summary(df_train)
+summary(df_test)
+```
+From the output of the above code(suppressed) we see that the trianing set cntains the 'classe' column which is the quality of the excercise and is the value we will be predicting and the test set comtains a problem id column in its place.
+
+##Feature Set
+### Verify that the column names (other than classe and problem_id) are teh same in the training and test set.
+```{r}
+all.equal(cols_train[1:length(cols_train)-1], cols_test[1:length(cols_train)-1])
+```
+
+###Create a function to count the number of non-NAs in each column
+```{r}
+nonNAVals <- function(x) {
+  as.vector(apply(x, 2, function(x) length(which(!is.na(x)))))
+}
+```
+
+###Create a vector of NA columns that will be removed.
+```{r}
+colcnts <- nonNAVals(df_train)
+dropcols <- c()
+for (cnt in 1:length(colcnts)) {
+  if (colcnts[cnt] < nrow(df_train)) {
+    dropcols <- c(dropcols, cols_train[cnt])
+  }
+}
+```
+
+###Drop NA data and the first 7 columns that are not necessary for predicting.
+```{r}
+df_train <- df_train[,!(names(df_train) %in% dropcols)]
+df_train <- df_train[,8:length(colnames(df_train))]
+
+df_test <- df_test[,!(names(df_test) %in% dropcols)]
+df_test <- df_test[,8:length(colnames(df_test))]
+```
+
+###The remaining columns below will be the features used for prediction.
+```{r}
+colnames(df_train)
+```
+
+We then check the covariates that have virtually no variablity.
+```{r, results='hide'}
+nzv <- nearZeroVar(df_train, saveMetrics=TRUE)
+nzv
+```
+
+From the output(supressed), we see that all the near zero variance variables are FALSE and there is no need to drop any covariates.
+
+##Algorithm
+
+We have chosen to try two different algorithms - classification trees and random forests. We will partition the training data provided into a train subset and test subset. 
+
+Both models will trained using the train subset of the training data and tested for accuracy against the test subset of the training data. Out of Sample errors will be calculated. Accuracy will be used to then pick the final model to be used for validation and predicting against the actual test data set provided.
+
+###Partition the training data into subsets for training and testing.
+We partitioned the training data into two different groups - one for training (60%) and one for testing (40%). 
+```{r}
+dataToTrain <- createDataPartition(y=df_train$classe, p=0.6, list=FALSE)
+df_to_train <- df_train[dataToTrain,]
+df_to_test <- df_train[-dataToTrain,]
+
+```
+
+##Parameters
+
+####Cross Validation
+We have chosen to use cross validation with both the models with K =3.
+```{r}
+fitControl <- trainControl(method='cv', number = 3)
+```
+
+##Evaluation
+
+The following creates the models using rpart and random Forests.
+
+####RPART
+```{r}
+model_rpart <- train(
+  classe ~ ., 
+  data=df_to_train,
+  trControl=fitControl,
+  method='rpart'
+)
+
+print(model_rpart, digits=3)
+```
+The accuracy of this model is not very good at 0.592. The following shows a plot for the model.
+
+####RpartPlot
+```{r}
+fancyRpartPlot(model_rpart$finalModel)
+```
+
+####Random Forests
+
+We now try the random forest algorithm.
+```{r}
+model_rf <- train(
+  classe ~ ., 
+  data=df_to_train,
+  trControl=fitControl,
+  method='rf',
+  ntree=100
+)
+
+print(model_rf, digits=3)
+```
+
+The accuracy of this model seems good at 0.986. We use both the models on the test subset created out of the training data for evaluating the accuracy and out of sample errors.
+
+```{r}
+predRPART <- predict(model_rpart, newdata=df_to_test)
+cmRPART <- confusionMatrix(predRPART, df_to_test$classe)
+predRF <- predict(model_rf, newdata=df_to_test)
+cmRF <- confusionMatrix(predRF, df_to_test$classe)
+AccuracyResults <- data.frame(
+  Model = c('RPART', 'RF'),
+  Accuracy = rbind(cmRPART$overall[1], cmRF$overall[1])
+)
+print(AccuracyResults)
+```
+We see that the accuracy of the rpart model si not very good but te accuracy of the RF model is very good at 0.992 in predicting the test subset.
+
+####Out of Sample Error
+The out of Sample error for the rpart algorithm was 0.4245 and the rf algorithm was 0.01.
+
+##Conclusion
+Based on the accuracy of the RF model we chose to use teh RF model to predict for the actual test data provided. 
+
+```{r}
+# Validation against actual test data
+predValidation <- predict(model_rf, newdata=df_test)
+PredictionResults <- data.frame(
+  problem_id=df_test$problem_id,
+  predicted=predValidation
+)
+
+#print the results for the test data 
+print(PredictionResults)
+```
+
+Based on the Quiz results, these predictions were 100% correct.
